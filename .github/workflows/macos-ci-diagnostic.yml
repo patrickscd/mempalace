@@ -1,0 +1,82 @@
+name: macOS CI stall diagnosis
+
+on:
+  push:
+    branches: [codex/diagnose-macos-ci]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: macOS Python 3.13 (${{ matrix.snapshot }})
+    runs-on: macos-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - snapshot: control
+            commit: 55008ed9f6d2801657bcb79b642e66f1b423d1b3
+          - snapshot: current
+            commit: e9cfad0a93c2474c6d6a3b5c45908c81f1a6673a
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ matrix.commit }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Record tested commit
+        run: |
+          mkdir -p diagnostics
+          git rev-parse HEAD | tee diagnostics/commit.txt
+      - name: Install development dependencies
+        run: python -m pip install -e ".[dev]" 2>&1 | tee diagnostics/install.log
+      - name: Record environment versions
+        if: always()
+        run: |
+          python - <<'PY' | tee diagnostics/environment.json
+          import importlib.metadata
+          import json
+          import platform
+          import sqlite3
+          import sys
+
+          def version(distribution):
+              try:
+                  return importlib.metadata.version(distribution)
+              except importlib.metadata.PackageNotFoundError:
+                  return "not installed"
+
+          print(json.dumps({
+              "system": platform.platform(),
+              "machine": platform.machine(),
+              "macos": platform.mac_ver()[0],
+              "python": sys.version,
+              "executable": sys.executable,
+              "sqlite": sqlite3.sqlite_version,
+              "chromadb": version("chromadb"),
+              "pytest": version("pytest"),
+              "pytest-cov": version("pytest-cov"),
+          }, indent=2))
+          PY
+          python -m pip freeze > diagnostics/pip-freeze.txt
+      - name: Run full suite with thread-stack diagnostics
+        timeout-minutes: 12
+        run: |
+          python -u -m pytest tests/ -vv --ignore=tests/benchmarks \
+            --cov=mempalace --cov-report=term-missing --cov-fail-under=80 \
+            --durations=10 --capture=tee-sys -o faulthandler_timeout=120 \
+            --junitxml=diagnostics/junit.xml 2>&1 | tee diagnostics/pytest.log
+      - name: Preserve diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macos-ci-${{ matrix.snapshot }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/
+          retention-days: 7
