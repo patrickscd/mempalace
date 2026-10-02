@@ -16,10 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - snapshot: control
-            commit: 55008ed9f6d2801657bcb79b642e66f1b423d1b3
-          - snapshot: current
-            commit: e9cfad0a93c2474c6d6a3b5c45908c81f1a6673a
+          - snapshot: fixed
+            commit: aac884aca906caefd75dfa1d22e538f19e5a0ec8
     defaults:
       run:
         shell: bash
